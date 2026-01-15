@@ -1,5 +1,8 @@
+import java.sql.*;
+
 public class Main {
     public static void main(String[] args) {
-        System.out.println("sexy gay");
+        Connection conn = Connector.getConnection();
+        System.out.println(new NeisAPI().getMenu());
     }
 }
