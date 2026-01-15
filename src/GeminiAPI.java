@@ -4,22 +4,38 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 public class GeminiAPI {
-    private static final String API_KEY = "AIzaSyDz8dJdOn68gF3gl1xvZz1QejXe4LsRL9M";
+    private static final String API_KEY = "AIzaSyBni0yHnquigbQTxa8DoDyWWAlQtCFa4_Q";
     private static final String API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=" + API_KEY;
 
-    String getMenu(String menus) {
+    public RecommendationResult getRecommendation(String userPreference, String userBulho, List<String> lunchList) {
+
+        StringBuilder menuListString = new StringBuilder();
+        for (String menu : lunchList) {
+            menuListString.append(menu).append(", ");
+        }
+
+        String prompt = "너는 급식 추천 AI야.\n" +
+            "사용자의 선호: " + userPreference + "\n" +
+            "사용자의 불호: " + userBulho + "\n" +
+            "이번 달 급식 메뉴 목록: [" + menuListString.toString() + "]\n\n" +
+            "위 급식 메뉴 목록 중에서 사용자의 취향에 가장 잘 맞는 메뉴를 딱 하나만 골라줘.\n" +
+            "답변은 반드시 아래 형식으로 딱 한 줄만 작성해. 부가 설명 하지 마.\n" +
+            "형식: 날짜|||메뉴이름|||추천이유\n" +
+            "예시: 2026-01-15|||돈까스|||바삭한 튀김을 좋아해서 추천함";
+
+
         try {
             String jsonBody = "{\n" +
                 "  \"contents\": [{\n" +
                 "    \"parts\": [{\n" +
-                "      \"text\": \"" + escapeJson(question) + "\"\n" +
+                "      \"text\": \"" + escapeJson(prompt) + "\"\n" +
                 "    }]\n" +
                 "  }]\n" +
                 "}";
 
-            // 3. HTTP 요청 생성
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(API_URL))
@@ -27,52 +43,50 @@ public class GeminiAPI {
                 .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
                 .build();
 
-            // 4. 요청 전송 및 응답 수신
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
-                String responseBody = response.body();
+                String rawText = extractTextFromResponse(response.body());
 
-                // 5. 응답 파싱 (JSON 라이브러리 없이 텍스트 추출)
-                String answer = extractTextFromResponse(responseBody);
+                if (rawText.contains("|||")) {
+                    String[] parts = rawText.split("\\|\\|\\|");
+                    if (parts.length >= 3) {
+                        String date = parts[0].trim();
+                        String menu = parts[1].trim();
+                        String reason = parts[2].trim();
 
-                System.out.println("--- 답변 ---");
-                System.out.println(answer);
-                System.out.println("------------");
+                        return new RecommendationResult(date, menu, reason);
+                    }
+                }
+                return new RecommendationResult("날짜없음", "분석 실패: " + rawText, "AI가 형식을 지키지 않았습니다.");
 
             } else {
-                System.err.println("요청 실패! 상태 코드: " + response.statusCode());
-                System.err.println("에러 메시지: " + response.body());
+                System.err.println("요청 실패: " + response.statusCode());
+                return new RecommendationResult("에러", "통신 에러", response.body());
             }
 
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
+            return new RecommendationResult("에러", "예외 발생", e.getMessage());
         }
     }
 
-    // JSON 문자열 깨짐 방지를 위한 간단한 이스케이프 처리 함수
     private static String escapeJson(String text) {
+        if (text == null) return "";
         return text.replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
             .replace("\r", "\\r");
     }
 
-    // 정규식(Regex)을 사용하여 JSON 응답에서 "text" 부분만 추출하는 함수
-    // 라이브러리 없이 값을 꺼내기 위한 "꼼수"입니다.
     private static String extractTextFromResponse(String jsonResponse) {
-        // Gemini 응답 구조: "text": "실제 답변 내용"
-        // 단순 파싱이므로 답변 내에 복잡한 패턴이 있으면 완벽하지 않을 수 있습니다.
         try {
             String marker = "\"text\": \"";
             int startIndex = jsonResponse.indexOf(marker);
 
-            if (startIndex == -1) return "답변을 찾을 수 없습니다 (Raw Response 확인 필요).";
+            if (startIndex == -1) return "응답 없음";
 
             startIndex += marker.length();
-
-            // 답변이 끝나는 지점 찾기 (이스케이프된 따옴표 제외하고 진짜 닫는 따옴표 찾기)
-            // 간단한 구현을 위해 다음 따옴표를 찾습니다.
             int endIndex = startIndex;
             boolean isEscaped = false;
 
@@ -87,16 +101,12 @@ public class GeminiAPI {
                     isEscaped = false;
                 }
             }
-
             String extracted = jsonResponse.substring(startIndex, endIndex);
-
-            // JSON 이스케이프 문자(\n, \", 등)를 다시 원래대로 복구
             return extracted.replace("\\n", "\n")
                 .replace("\\\"", "\"")
                 .replace("\\\\", "\\");
-
         } catch (Exception e) {
-            return "파싱 오류: " + e.getMessage();
+            return "파싱 오류";
         }
     }
 }
